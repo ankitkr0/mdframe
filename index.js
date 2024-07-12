@@ -118,7 +118,7 @@ app.get('/', (req, res) => {
       </head>
       <body>
         <h1>Million Token Frame</h1>
-        <img src="/frame-image" alt="Million Token Frame" onerror="this.onerror=null; this.src='/fallback-image.png'; console.error('Error loading frame image');">
+        <img src="/frame-image" alt="Million Token Frame" onerror="this.onerror=null; this.src='public/fallback-image.png'; console.error('Error loading frame image');">
         <p><a href="/dashboard">View Dashboard</a></p>
       </body>
       </html>
