@@ -9,10 +9,15 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static('public'));
 
+// Add CORS headers
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  next();
+});
+
 // Grid configuration
 const GRID_SIZE = 1000;
 const TOKEN_SIZE = 10;
-const TOKENS_PER_CLAIM = 1;
 
 let grid = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(null));
 let userPixels = {};
@@ -37,39 +42,48 @@ async function saveData() {
 
 function generatePixelColor(x, y, claimed) {
   if (claimed) {
-    // Generate a gradient color for claimed pixels
     const r = Math.sin(0.3 * x) * 127 + 128;
     const g = Math.sin(0.3 * y) * 127 + 128;
     const b = Math.sin(0.3 * (x + y)) * 127 + 128;
     return Jimp.rgbaToInt(r, g, b, 255);
   } else {
-    // Generate a light grey color for unclaimed pixels
     const value = Math.sin(0.1 * (x + y)) * 30 + 225;
     return Jimp.rgbaToInt(value, value, value, 255);
   }
 }
 
 async function generateImage(newPixelX, newPixelY) {
-  const image = new Jimp(GRID_SIZE, GRID_SIZE);
+  const width = 1200;
+  const height = 630;
+  const image = new Jimp(width, height, 0xFFFFFFFF); // White background
+
+  const scaleFactor = width / GRID_SIZE;
+  const scaledTokenSize = Math.floor(TOKEN_SIZE * scaleFactor);
 
   for (let y = 0; y < GRID_SIZE; y += TOKEN_SIZE) {
     for (let x = 0; x < GRID_SIZE; x += TOKEN_SIZE) {
       const color = generatePixelColor(x, y, grid[y][x] !== null);
-      image.scanQuiet(x, y, TOKEN_SIZE, TOKEN_SIZE, function(x, y, idx) {
+      const scaledX = Math.floor(x * scaleFactor);
+      const scaledY = Math.floor(y * scaleFactor);
+      image.scanQuiet(scaledX, scaledY, scaledTokenSize, scaledTokenSize, function(x, y, idx) {
         this.bitmap.data.writeUInt32BE(color, idx);
       });
     }
   }
 
-  // Highlight new pixel if provided
   if (newPixelX !== null && newPixelY !== null) {
     const highlightColor = Jimp.rgbaToInt(255, 255, 0, 128); // Semi-transparent yellow
-    image.scanQuiet(newPixelX, newPixelY, TOKEN_SIZE, TOKEN_SIZE, function(x, y, idx) {
+    const scaledX = Math.floor(newPixelX * scaleFactor);
+    const scaledY = Math.floor(newPixelY * scaleFactor);
+    image.scanQuiet(scaledX, scaledY, scaledTokenSize, scaledTokenSize, function(x, y, idx) {
       const baseColor = this.bitmap.data.readUInt32BE(idx);
       const blendedColor = Jimp.blend(baseColor, highlightColor);
       this.bitmap.data.writeUInt32BE(blendedColor, idx);
     });
   }
+
+  const font = await Jimp.loadFont(Jimp.FONT_SANS_16_BLACK);
+  image.print(font, 10, 10, 'Million Pixel Frame');
 
   return await image.getBufferAsync(Jimp.MIME_PNG);
 }
@@ -98,6 +112,7 @@ app.get('/', (req, res) => {
       <title>Million Token Frame</title>
       <meta property="fc:frame" content="vNext">
       <meta property="fc:frame:image" content="${baseUrl}/frame-image">
+      <meta property="fc:frame:image:aspect_ratio" content="1.91:1">
       <meta property="fc:frame:button:1" content="Claim Pixel">
       <meta property="fc:frame:post_url" content="${baseUrl}/api/frame">
     </head>
@@ -112,30 +127,30 @@ app.get('/', (req, res) => {
 });
 
 app.get('/dashboard', (req, res) => {
-    res.send(`
-      <h1>User Dashboard</h1>
-      <p>Enter your Farcaster ID to view your pixels:</p>
-      <input type="text" id="fidInput" placeholder="Enter your FID">
-      <button onclick="viewPixels()">View My Pixels</button>
-      <div id="pixelInfo"></div>
-      <script>
-        function viewPixels() {
-          const fid = document.getElementById('fidInput').value;
-          fetch('/api/user-pixels?fid=' + fid)
-            .then(response => response.json())
-            .then(data => {
-              const pixelInfo = document.getElementById('pixelInfo');
-              if (data.pixels.length > 0) {
-                pixelInfo.innerHTML = '<h2>Your Pixels:</h2>' +
-                  data.pixels.map(p => '<p>Position: (' + p.x + ', ' + p.y + ')</p>').join('');
-              } else {
-                pixelInfo.innerHTML = '<p>You haven\'t claimed any pixels yet.</p>';
-              }
-            });
-        }
-      </script>
-    `);
-  });
+  res.send(`
+    <h1>User Dashboard</h1>
+    <p>Enter your Farcaster ID to view your pixels:</p>
+    <input type="text" id="fidInput" placeholder="Enter your FID">
+    <button onclick="viewPixels()">View My Pixels</button>
+    <div id="pixelInfo"></div>
+    <script>
+      function viewPixels() {
+        const fid = document.getElementById('fidInput').value;
+        fetch('/api/user-pixels?fid=' + fid)
+          .then(response => response.json())
+          .then(data => {
+            const pixelInfo = document.getElementById('pixelInfo');
+            if (data.pixels.length > 0) {
+              pixelInfo.innerHTML = '<h2>Your Pixels:</h2>' +
+                data.pixels.map(p => '<p>Position: (' + p.x + ', ' + p.y + ')</p>').join('');
+            } else {
+              pixelInfo.innerHTML = '<p>You haven\'t claimed any pixels yet.</p>';
+            }
+          });
+      }
+    </script>
+  `);
+});
 
 app.get('/api/user-pixels', (req, res) => {
   const { fid } = req.query;
@@ -144,9 +159,14 @@ app.get('/api/user-pixels', (req, res) => {
 });
 
 app.get('/frame-image', async (req, res) => {
-  const image = await generateImage(null, null);
-  res.contentType('image/png');
-  res.send(image);
+  try {
+    const image = await generateImage(null, null);
+    res.contentType('image/png');
+    res.send(image);
+  } catch (error) {
+    console.error('Error generating image:', error);
+    res.status(500).send('Error generating image');
+  }
 });
 
 app.post('/api/frame', async (req, res) => {
