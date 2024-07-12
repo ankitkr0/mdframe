@@ -101,30 +101,30 @@ async function verifyFarcasterMessage(trustedData, untrustedData) {
 }
 
 app.get('/', (req, res) => {
-  const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
-
-  const html = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Million Token Frame</title>
-      <meta property="fc:frame" content="vNext">
-      <meta property="fc:frame:image" content="${baseUrl}/frame-image">
-      <meta property="fc:frame:image:aspect_ratio" content="1.91:1">
-      <meta property="fc:frame:button:1" content="Claim Pixel">
-      <meta property="fc:frame:post_url" content="${baseUrl}/api/frame">
-    </head>
-    <body>
-      <h1>Million Token Frame</h1>
-      <img src="/frame-image" alt="Million Token Frame">
-      <p><a href="/dashboard">View Dashboard</a></p>
-    </body>
-    </html>
-  `;
-  res.send(html);
-});
+    const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
+  
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Million Token Frame</title>
+        <meta property="fc:frame" content="vNext">
+        <meta property="fc:frame:image" content="${baseUrl}/frame-image">
+        <meta property="fc:frame:image:aspect_ratio" content="1.91:1">
+        <meta property="fc:frame:button:1" content="Claim Pixel">
+        <meta property="fc:frame:post_url" content="${baseUrl}/api/frame">
+      </head>
+      <body>
+        <h1>Million Token Frame</h1>
+        <img src="/frame-image" alt="Million Token Frame" onerror="this.onerror=null; this.src='/fallback-image.png'; console.error('Error loading frame image');">
+        <p><a href="/dashboard">View Dashboard</a></p>
+      </body>
+      </html>
+    `;
+    res.send(html);
+  });
 
 app.get('/dashboard', (req, res) => {
   res.send(`
