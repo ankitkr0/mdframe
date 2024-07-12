@@ -1,6 +1,7 @@
 const express = require('express');
 const Jimp = require('jimp');
 const fs = require('fs').promises;
+const path = require('path');
 const { getSSLHubRpcClient, Message } = require('@farcaster/hub-nodejs');
 
 const app = express();
@@ -42,12 +43,12 @@ async function saveData() {
 
 function generatePixelColor(x, y, claimed) {
   if (claimed) {
-    const r = Math.sin(0.3 * x) * 127 + 128;
-    const g = Math.sin(0.3 * y) * 127 + 128;
-    const b = Math.sin(0.3 * (x + y)) * 127 + 128;
+    const r = Math.floor(Math.sin(0.3 * x) * 127 + 128);
+    const g = Math.floor(Math.sin(0.3 * y) * 127 + 128);
+    const b = Math.floor(Math.sin(0.3 * (x + y)) * 127 + 128);
     return Jimp.rgbaToInt(r, g, b, 255);
   } else {
-    const value = Math.sin(0.1 * (x + y)) * 30 + 225;
+    const value = Math.floor(Math.sin(0.1 * (x + y)) * 30 + 225);
     return Jimp.rgbaToInt(value, value, value, 255);
   }
 }
@@ -58,15 +59,17 @@ async function generateImage(newPixelX, newPixelY) {
   const image = new Jimp(width, height, 0xFFFFFFFF); // White background
 
   const scaleFactor = width / GRID_SIZE;
-  const scaledTokenSize = Math.floor(TOKEN_SIZE * scaleFactor);
+  const scaledTokenSize = Math.max(1, Math.floor(TOKEN_SIZE * scaleFactor));
 
-  for (let y = 0; y < GRID_SIZE; y += TOKEN_SIZE) {
-    for (let x = 0; x < GRID_SIZE; x += TOKEN_SIZE) {
-      const color = generatePixelColor(x, y, grid[y][x] !== null);
-      const scaledX = Math.floor(x * scaleFactor);
-      const scaledY = Math.floor(y * scaleFactor);
-      image.scanQuiet(scaledX, scaledY, scaledTokenSize, scaledTokenSize, function(x, y, idx) {
-        this.bitmap.data.writeUInt32BE(color, idx);
+  for (let y = 0; y < height; y += scaledTokenSize) {
+    for (let x = 0; x < width; x += scaledTokenSize) {
+      const gridX = Math.floor(x / scaleFactor);
+      const gridY = Math.floor(y / scaleFactor);
+      const color = generatePixelColor(gridX, gridY, grid[gridY] && grid[gridY][gridX]);
+      image.scanQuiet(x, y, Math.min(scaledTokenSize, width - x), Math.min(scaledTokenSize, height - y), function(x, y, idx) {
+        if (this.bitmap.data.length > idx + 3) {
+          this.bitmap.data.writeUInt32BE(color, idx);
+        }
       });
     }
   }
@@ -75,10 +78,12 @@ async function generateImage(newPixelX, newPixelY) {
     const highlightColor = Jimp.rgbaToInt(255, 255, 0, 128); // Semi-transparent yellow
     const scaledX = Math.floor(newPixelX * scaleFactor);
     const scaledY = Math.floor(newPixelY * scaleFactor);
-    image.scanQuiet(scaledX, scaledY, scaledTokenSize, scaledTokenSize, function(x, y, idx) {
-      const baseColor = this.bitmap.data.readUInt32BE(idx);
-      const blendedColor = Jimp.blend(baseColor, highlightColor);
-      this.bitmap.data.writeUInt32BE(blendedColor, idx);
+    image.scanQuiet(scaledX, scaledY, Math.min(scaledTokenSize, width - scaledX), Math.min(scaledTokenSize, height - scaledY), function(x, y, idx) {
+      if (this.bitmap.data.length > idx + 3) {
+        const baseColor = this.bitmap.data.readUInt32BE(idx);
+        const blendedColor = Jimp.blend(baseColor, highlightColor);
+        this.bitmap.data.writeUInt32BE(blendedColor, idx);
+      }
     });
   }
 
@@ -101,30 +106,30 @@ async function verifyFarcasterMessage(trustedData, untrustedData) {
 }
 
 app.get('/', (req, res) => {
-    const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
-  
-    const html = `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Million Token Frame</title>
-        <meta property="fc:frame" content="vNext">
-        <meta property="fc:frame:image" content="${baseUrl}/frame-image">
-        <meta property="fc:frame:image:aspect_ratio" content="1.91:1">
-        <meta property="fc:frame:button:1" content="Claim Pixel">
-        <meta property="fc:frame:post_url" content="${baseUrl}/api/frame">
-      </head>
-      <body>
-        <h1>Million Token Frame</h1>
-        <img src="/frame-image" alt="Million Token Frame" onerror="this.onerror=null; this.src='public/fallback-image.png'; console.error('Error loading frame image');">
-        <p><a href="/dashboard">View Dashboard</a></p>
-      </body>
-      </html>
-    `;
-    res.send(html);
-  });
+  const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Million Token Frame</title>
+      <meta property="fc:frame" content="vNext">
+      <meta property="fc:frame:image" content="${baseUrl}/frame-image">
+      <meta property="fc:frame:image:aspect_ratio" content="1.91:1">
+      <meta property="fc:frame:button:1" content="Claim Pixel">
+      <meta property="fc:frame:post_url" content="${baseUrl}/api/frame">
+    </head>
+    <body>
+      <h1>Million Token Frame</h1>
+      <img src="/frame-image" alt="Million Token Frame" onerror="this.onerror=null; this.src='/fallback-image.png'; console.error('Error loading frame image');">
+      <p><a href="/dashboard">View Dashboard</a></p>
+    </body>
+    </html>
+  `;
+  res.send(html);
+});
 
 app.get('/dashboard', (req, res) => {
   res.send(`
@@ -160,12 +165,16 @@ app.get('/api/user-pixels', (req, res) => {
 
 app.get('/frame-image', async (req, res) => {
   try {
+    console.log('Generating frame image...');
+    const startTime = Date.now();
     const image = await generateImage(null, null);
+    const endTime = Date.now();
+    console.log(`Image generated in ${endTime - startTime}ms`);
     res.contentType('image/png');
     res.send(image);
   } catch (error) {
     console.error('Error generating image:', error);
-    res.status(500).send('Error generating image');
+    res.status(500).sendFile(path.join(__dirname, 'public', 'fallback-image.png'));
   }
 });
 
